@@ -76,8 +76,8 @@ const BoundedAllocator = struct {
     }
 
     fn alloc(allocator: *Allocator, n: usize, ptr_align: u29, len_align: u29, ra: usize) ![]u8 {
+        const self = @fieldParentPtr(BoundedAllocator, "allocator", allocator);
         while (true) {
-            const self = @fieldParentPtr(BoundedAllocator, "allocator", allocator);
             const result = self.parent.allocator.allocFn(&self.parent.allocator, n, ptr_align, len_align, ra);
             if (result) |ok| {
                 return ok;
@@ -96,7 +96,21 @@ const BoundedAllocator = struct {
 
     fn resize(allocator: *Allocator, buf: []u8, buf_align: u29, new_len: usize, len_align: u29, ret_addr: usize) Allocator.Error!usize {
         const self = @fieldParentPtr(BoundedAllocator, "allocator", allocator);
-        return self.parent.allocator.resizeFn(&self.parent.allocator, buf, buf_align, new_len, len_align, ret_addr);
+        while (true) {
+            const result = self.parent.allocator.resizeFn(&self.parent.allocator, buf, buf_align, new_len, len_align, ret_addr);
+            if (result) |ok| {
+                return ok;
+            } else |err| {
+                self.state = .OutOfMemory;
+                // Request more memory
+                suspend {}
+                if (self.state == .Ok)
+                    // Request granted, try again
+                    continue
+                else
+                    return err;
+            }
+        }
     }
 };
 
