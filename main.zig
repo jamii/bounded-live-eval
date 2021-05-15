@@ -48,6 +48,10 @@ pub fn eval(allocator: *Allocator, expr: Expr) error{OutOfMemory}![]const []cons
 const BoundedAllocator = struct {
     parent: ParentAllocator,
     allocator: Allocator,
+    state: union(enum) {
+        Ok,
+        OutOfMemory,
+    },
 
     const ParentAllocator = std.heap.GeneralPurposeAllocator(.{
         .enable_memory_limit = true,
@@ -62,12 +66,32 @@ const BoundedAllocator = struct {
                 .allocFn = alloc,
                 .resizeFn = resize,
             },
+            .state = .Ok,
         };
     }
 
+    fn doubleLimit(self: *BoundedAllocator) void {
+        self.parent.requested_memory_limit = self.parent.requested_memory_limit * 2;
+        self.state = .Ok;
+    }
+
     fn alloc(allocator: *Allocator, n: usize, ptr_align: u29, len_align: u29, ra: usize) ![]u8 {
-        const self = @fieldParentPtr(BoundedAllocator, "allocator", allocator);
-        return self.parent.allocator.allocFn(&self.parent.allocator, n, ptr_align, len_align, ra);
+        while (true) {
+            const self = @fieldParentPtr(BoundedAllocator, "allocator", allocator);
+            const result = self.parent.allocator.allocFn(&self.parent.allocator, n, ptr_align, len_align, ra);
+            if (result) |ok| {
+                return ok;
+            } else |err| {
+                self.state = .OutOfMemory;
+                // Request more memory
+                suspend {}
+                if (self.state == .Ok)
+                    // Request granted, try again
+                    continue
+                else
+                    return err;
+            }
+        }
     }
 
     fn resize(allocator: *Allocator, buf: []u8, buf_align: u29, new_len: usize, len_align: u29, ret_addr: usize) Allocator.Error!usize {
@@ -83,7 +107,11 @@ pub fn main() !void {
     const expr_1 = Expr{ .Constant = 1 };
     const expr_01 = Expr{ .Union = .{ .left = &expr_0, .right = &expr_1 } };
     const expr = Expr{ .Product = .{ .left = &expr_01, .right = &expr_01 } };
-    const bag = try eval(allocator, expr);
+
+    var frame = async eval(allocator, expr);
+    while (bounded_allocator.state == .OutOfMemory)
+        bounded_allocator.doubleLimit();
+    const bag = try await frame;
     for (bag) |row| {
         for (row) |number| {
             std.debug.print("{}, ", .{number});
