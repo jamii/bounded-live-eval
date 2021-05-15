@@ -70,11 +70,6 @@ const BoundedAllocator = struct {
         };
     }
 
-    fn doubleLimit(self: *BoundedAllocator) void {
-        self.parent.requested_memory_limit = self.parent.requested_memory_limit * 2;
-        self.state = .Ok;
-    }
-
     fn alloc(allocator: *Allocator, n: usize, ptr_align: u29, len_align: u29, ra: usize) ![]u8 {
         const self = @fieldParentPtr(BoundedAllocator, "allocator", allocator);
         while (true) {
@@ -123,8 +118,10 @@ pub fn main() !void {
     const expr = Expr{ .Product = .{ .left = &expr_01, .right = &expr_01 } };
 
     var frame = async eval(allocator, expr);
-    while (bounded_allocator.state == .OutOfMemory)
-        bounded_allocator.doubleLimit();
+    while (bounded_allocator.state == .OutOfMemory) {
+        bounded_allocator.parent.requested_memory_limit = bounded_allocator.parent.requested_memory_limit * 2;
+        bounded_allocator.state = .Ok;
+    }
     const bag = try await frame;
     for (bag) |row| {
         for (row) |number| {
