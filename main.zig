@@ -52,12 +52,14 @@ const Evaluator = struct {
         NotSuspended,
         Suspended,
     },
+    frame: ?anyframe,
 
     fn init(allocator: *Allocator) Evaluator {
         return .{
             .allocator = allocator,
             .work_budget_remaining = 0,
             .state = .NotSuspended,
+            .frame = null,
         };
     }
 
@@ -65,7 +67,9 @@ const Evaluator = struct {
         if (self.work_budget_remaining == 0) {
             self.state = .Suspended;
             std.debug.print("Suspending\n", .{});
-            suspend {}
+            suspend {
+                self.frame = @frame();
+            }
             std.debug.print("Unsuspending\n", .{});
             std.debug.assert(self.state == .NotSuspended);
         }
@@ -130,7 +134,7 @@ fn async_main() !void {
     while (evaluator.state == .Suspended) {
         evaluator.work_budget_remaining = 1;
         evaluator.state = .NotSuspended;
-        resume frame;
+        resume evaluator.frame.?;
     }
 
     const bag = try await frame;
