@@ -1,6 +1,10 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const ArenaAllocator = std.heap.ArenaAllocator;
 const GeneralPurposeAllocator = std.heap.GeneralPurposeAllocator;
+const assert = std.debug.assert;
+
+// --- interpreter ---
 
 const Expr = union(enum) {
     Constant: u64,
@@ -9,9 +13,9 @@ const Expr = union(enum) {
     Dup,
 };
 
-pub fn parse(allocator: *Allocator, code: []const u8) ![]const Expr {
+pub fn parse(arena: *ArenaAllocator, code: []const u8) ![]const Expr {
     var stack_size: usize = 0;
-    var exprs = std.ArrayList(Expr).init(allocator);
+    var exprs = std.ArrayList(Expr).init(&arena.allocator);
     for (code) |char| {
         switch (char) {
             ' ' => continue,
@@ -45,133 +49,195 @@ pub fn parse(allocator: *Allocator, code: []const u8) ![]const Expr {
     return exprs.toOwnedSlice();
 }
 
-const Evaluator = struct {
-    allocator: *Allocator,
+fn eval(arena: *ArenaAllocator, bounder: *Bounder, exprs: []const Expr) ![]const []const u64 {
+    var stack = std.ArrayList([]const []const u64).init(&arena.allocator);
+    for (exprs) |expr| {
+        switch (expr) {
+            .Constant => |number| {
+                bounder.spendBudget();
+                const row = try arena.allocator.alloc(u64, 1);
+                const bag = try arena.allocator.alloc([]const u64, 1);
+                row[0] = number;
+                bag[0] = row;
+                try stack.append(bag);
+            },
+            .Union => {
+                const left_bag = stack.pop();
+                const right_bag = stack.pop();
+                bounder.spendBudget();
+                const bag = try std.mem.concat(&arena.allocator, []const u64, &[_][]const []const u64{ left_bag, right_bag });
+                try stack.append(bag);
+            },
+            .Product => {
+                const left_bag = stack.pop();
+                const right_bag = stack.pop();
+                const bag = try arena.allocator.alloc([]const u64, left_bag.len * right_bag.len);
+                var i: usize = 0;
+                for (left_bag) |left_row| {
+                    for (right_bag) |right_row| {
+                        bounder.spendBudget();
+                        bag[i] = try std.mem.concat(&arena.allocator, u64, &[_][]const u64{ left_row, right_row });
+                        i += 1;
+                    }
+                }
+                try stack.append(bag);
+            },
+            .Dup => {
+                const bag = stack.pop();
+                try stack.append(bag);
+                try stack.append(bag);
+            },
+        }
+    }
+    return stack.pop();
+}
+
+// --- bounder ---
+
+const Bounder = struct {
     work_budget_remaining: usize,
     state: union(enum) {
         NotSuspended,
-        Suspended,
+        Suspended: anyframe,
     },
-    frame: ?anyframe,
 
-    fn init(allocator: *Allocator) Evaluator {
+    fn init() Bounder {
         return .{
-            .allocator = allocator,
             .work_budget_remaining = 0,
             .state = .NotSuspended,
-            .frame = null,
         };
     }
 
-    fn spend_budget(self: *Evaluator) void {
+    fn hasWork(self: *Bounder) bool {
+        return (self.state == .Suspended);
+    }
+
+    fn doWork(self: *Bounder) void {
+        self.work_budget_remaining = 1;
+        const frame = self.state.Suspended;
+        self.state = .NotSuspended;
+        resume frame;
+    }
+
+    fn spendBudget(self: *Bounder) void {
         if (self.work_budget_remaining == 0) {
-            self.state = .Suspended;
             suspend {
-                self.frame = @frame();
+                self.state = .{ .Suspended = @frame() };
             }
-            std.debug.assert(self.state == .NotSuspended);
         }
         self.work_budget_remaining -= 1;
     }
+};
 
-    fn eval(self: *Evaluator, exprs: []const Expr) ![]const []const u64 {
-        var stack = std.ArrayList([]const []const u64).init(self.allocator);
-        for (exprs) |expr| {
-            switch (expr) {
-                .Constant => |number| {
-                    self.spend_budget();
-                    const row = try self.allocator.alloc(u64, 1);
-                    const bag = try self.allocator.alloc([]const u64, 1);
-                    row[0] = number;
-                    bag[0] = row;
-                    try stack.append(bag);
-                },
-                .Union => {
-                    const left_bag = stack.pop();
-                    const right_bag = stack.pop();
-                    self.spend_budget();
-                    const bag = try std.mem.concat(self.allocator, []const u64, &[_][]const []const u64{ left_bag, right_bag });
-                    try stack.append(bag);
-                },
-                .Product => {
-                    const left_bag = stack.pop();
-                    const right_bag = stack.pop();
-                    const bag = try self.allocator.alloc([]const u64, left_bag.len * right_bag.len);
-                    var i: usize = 0;
-                    for (left_bag) |left_row| {
-                        for (right_bag) |right_row| {
-                            self.spend_budget();
-                            bag[i] = try std.mem.concat(self.allocator, u64, &[_][]const u64{ left_row, right_row });
-                            i += 1;
-                        }
+// --- ui state machine ---
+
+const Runner = struct {
+    arena: ArenaAllocator,
+    bounder: Bounder,
+    code: []u8,
+    exprs: []const Expr,
+    state: union(enum) {
+        Init,
+        Ok: []const u8,
+        Error: []const u8,
+        Running: @Frame(eval),
+    },
+
+    fn init(allocator: *Allocator) Runner {
+        return .{
+            .arena = ArenaAllocator.init(allocator),
+            .bounder = Bounder.init(),
+            .code = "",
+            .exprs = &[0]Expr{},
+            .state = .Init,
+        };
+    }
+
+    fn reset(self: *Runner, code_len: usize) []u8 {
+        const child_allocator = self.arena.child_allocator;
+        self.arena.deinit();
+        self.arena = ArenaAllocator.init(child_allocator);
+
+        self.code = self.arena.allocator.alloc(u8, code_len) catch @panic("OOM while receiving code");
+        self.exprs = &[0]Expr{};
+        self.state = .Init;
+
+        // js will write into this before calling start
+        return self.code;
+    }
+
+    fn start(self: *Runner) void {
+        assert(self.state == .Init);
+        if (parse(&self.arena, self.code)) |exprs| {
+            self.exprs = exprs;
+            self.state = .{ .Running = async eval(&self.arena, &self.bounder, self.exprs) };
+        } else |err| {
+            var string = std.ArrayList(u8).init(&self.arena.allocator);
+            var writer = string.writer();
+            std.fmt.format(writer, "{}", .{err}) catch @panic("OOM while writing error");
+            self.state = .{ .Error = string.toOwnedSlice() };
+        }
+    }
+
+    fn step(self: *Runner) void {
+        assert(self.state == .Running);
+        if (self.bounder.hasWork()) {
+            self.bounder.doWork();
+        } else {
+            var string = std.ArrayList(u8).init(&self.arena.allocator);
+            var writer = string.writer();
+            if (await self.state.Running) |bag| {
+                for (bag) |row| {
+                    for (row) |number| {
+                        std.fmt.format(writer, "{}, ", .{number}) catch {};
                     }
-                    try stack.append(bag);
-                },
-                .Dup => {
-                    const bag = stack.pop();
-                    try stack.append(bag);
-                    try stack.append(bag);
-                },
+                    std.fmt.format(writer, "\n", .{}) catch {};
+                }
+                self.state = .{ .Ok = string.toOwnedSlice() };
+            } else |err| {
+                std.fmt.format(writer, "{}", .{err}) catch {};
+                self.state = .{ .Error = string.toOwnedSlice() };
             }
         }
-        return stack.pop();
+    }
+
+    fn get_output(self: *Runner) []const u8 {
+        return switch (self.state) {
+            .Init => "",
+            .Ok => |string| string,
+            .Error => |string| string,
+            .Running => |_| "Running...",
+        };
     }
 };
 
-fn run_to_finish(allocator: *Allocator, code: []const u8) ![]const []const u64 {
-    const exprs = try parse(allocator, code);
-
-    var evaluator = Evaluator.init(allocator);
-    var frame = async evaluator.eval(exprs);
-    while (evaluator.state == .Suspended) {
-        evaluator.work_budget_remaining = 1;
-        evaluator.state = .NotSuspended;
-        resume evaluator.frame.?;
-    }
-
-    const bag = try await frame;
-    return bag;
-}
-
-// --- wasm stuff from here ---
+// --- globals and exports ---
 
 var gpa = GeneralPurposeAllocator(.{
     .enable_memory_limit = true,
 }){
     .requested_memory_limit = 100000,
 };
-const global_allocator = &gpa.allocator;
 
-export fn alloc_string(len: usize) usize {
-    if (global_allocator.alloc(u8, len)) |slice|
-        return @ptrToInt(@ptrCast(*u8, slice))
-    else |_|
-        return 0;
+var runner = Runner.init(&gpa.allocator);
+
+export fn runner_reset(code_len: usize) usize {
+    const code = runner.reset(code_len);
+    return @ptrToInt(@ptrCast(*u8, code));
 }
 
-var last_eval_string: []const u8 = "";
-
-export fn last_eval_ptr() usize {
-    return @ptrToInt(@ptrCast(*const u8, last_eval_string));
+export fn runner_start() void {
+    runner.start();
 }
 
-export fn last_eval_len() usize {
-    return last_eval_string.len;
+export fn runner_step() void {
+    if (runner.state == .Running) nosuspend runner.step();
 }
 
-export fn run(ptr: usize, len: usize) void {
-    const code = @intToPtr([*]u8, ptr)[0..len];
-    var string = std.ArrayList(u8).init(global_allocator);
-    var writer = string.writer();
-    if (nosuspend run_to_finish(global_allocator, code)) |bag| {
-        for (bag) |row| {
-            for (row) |number| {
-                std.fmt.format(writer, "{}, ", .{number}) catch {};
-            }
-            std.fmt.format(writer, "\n", .{}) catch {};
-        }
-    } else |err| {
-        std.fmt.format(writer, "{}", .{err}) catch {};
-    }
-    last_eval_string = string.toOwnedSlice();
+export fn runner_output_ptr() usize {
+    return @ptrToInt(@ptrCast(*const u8, runner.get_output()));
+}
+
+export fn runner_output_len() usize {
+    return runner.get_output().len;
 }
