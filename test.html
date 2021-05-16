@@ -40,6 +40,7 @@
       );
       
       const input = document.getElementById("bounded-live-eval-input");
+      const limit = document.getElementById("bounded-live-eval-limit");
       const output = document.getElementById("bounded-live-eval-output");
       
       var textarea = input.children[0];
@@ -65,10 +66,11 @@
           console.timeEnd("step");
       }
       
-      cm.on('change', function (cm) {
+      function reset() {
+          const limit_bytes = Math.pow(2, parseInt(limit.value));
           const code = new TextEncoder().encode(cm.getDoc().getValue());
           
-          const code_ptr = wasm.instance.exports.runnerReset(1024 * 1024 * 128, code.length);
+          const code_ptr = wasm.instance.exports.runnerReset(limit_bytes, code.length);
           let bytes1 = new Uint8Array(wasm.instance.exports.memory.buffer);
           for (var i = 0; i < code.length; i++) {
               bytes1[code_ptr+i] = code[i];
@@ -77,7 +79,10 @@
           output.innerText = "Running...";
           // if finished stepping previous run, need to start again
           if (!needs_stepping) step();
-      });
+      }
+      
+      cm.on('change', reset);
+      limit.onchange = reset;
       
       cm.getDoc().setValue(init_code);
   }
@@ -88,6 +93,7 @@
 <body>
   <div id="bounded-live-eval">
       <div id="bounded-live-eval-input"><textarea>0 1 | ^ *</textarea></div>
+      <div><span>Limit to 2^</span><input id="bounded-live-eval-limit" style="height: 1em;" type="text" value="10"></input><span> bytes</span></div>
       <div id="bounded-live-eval-output" style="height: 10em; overflow: scroll;"></div>
   </div>
 </body>
