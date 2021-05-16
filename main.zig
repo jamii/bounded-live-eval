@@ -195,7 +195,7 @@ const Runner = struct {
         }
     }
 
-    fn get_output(self: *Runner) []const u8 {
+    fn getOutput(self: *Runner) []const u8 {
         return switch (self.state) {
             .Init => "",
             .Ok => |string| string,
@@ -215,24 +215,38 @@ var gpa = GeneralPurposeAllocator(.{
 
 var runner = Runner.init(&gpa.allocator);
 
-export fn runner_reset(code_len: usize) usize {
+export fn runnerReset(memory_limit: usize, code_len: usize) usize {
+    gpa.requested_memory_limit = memory_limit;
     const code = runner.reset(code_len);
     return @ptrToInt(@ptrCast([*c]const u8, code));
 }
 
-export fn runner_start() void {
+export fn runnerStart() void {
     runner.start();
 }
 
-export fn runner_step(work_budget: usize) bool {
+export fn runnerStep(work_budget: usize) bool {
     if (runner.state == .Running) nosuspend runner.step(work_budget);
     return (runner.state == .Running);
 }
 
-export fn runner_output_ptr() usize {
-    return @ptrToInt(@ptrCast([*c]const u8, runner.get_output()));
+export fn runnerOutputPtr() usize {
+    return @ptrToInt(@ptrCast([*c]const u8, runner.getOutput()));
 }
 
-export fn runner_output_len() usize {
-    return runner.get_output().len;
+export fn runnerOutputLen() usize {
+    return runner.getOutput().len;
+}
+
+// --- for testing ---
+
+pub fn main() !void {
+    if (@import("builtin").os.tag != .freestanding) {
+        const code = try std.io.getStdIn().reader().readAllAlloc(&gpa.allocator, std.math.maxInt(usize));
+        _ = runnerReset(1024 * 1024 * 16, code.len);
+        runner.code = code;
+        runnerStart();
+        while (runnerStep(1)) {}
+        std.debug.print("{}", .{runner.getOutput()});
+    }
 }

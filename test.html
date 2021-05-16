@@ -50,29 +50,30 @@
       
       var needs_stepping = false;
       function step() {
-          console.log("step");
-          const work_budget = 1;
-          needs_stepping = wasm.instance.exports.runner_step(work_budget);
+          console.time("step");
+          const work_budget = 128;
+          needs_stepping = wasm.instance.exports.runnerStep(work_budget);
           if (needs_stepping) {
               setTimeout(step, 0);
           } else {
-              const output_ptr = wasm.instance.exports.runner_output_ptr();
-              const output_len = wasm.instance.exports.runner_output_len();
+              const output_ptr = wasm.instance.exports.runnerOutputPtr();
+              const output_len = wasm.instance.exports.runnerOutputLen();
               let bytes = new Uint8Array(wasm.instance.exports.memory.buffer);
               let result = new TextDecoder().decode(bytes.slice(output_ptr, output_ptr + output_len));
               output.innerText = result;
           }
+          console.timeEnd("step");
       }
       
       cm.on('change', function (cm) {
           const code = new TextEncoder().encode(cm.getDoc().getValue());
           
-          const code_ptr = wasm.instance.exports.runner_reset(code.length);
+          const code_ptr = wasm.instance.exports.runnerReset(1024 * 1024 * 128, code.length);
           let bytes1 = new Uint8Array(wasm.instance.exports.memory.buffer);
           for (var i = 0; i < code.length; i++) {
               bytes1[code_ptr+i] = code[i];
           }
-          wasm.instance.exports.runner_start();
+          wasm.instance.exports.runnerStart();
           output.innerText = "Running...";
           // if finished stepping previous run, need to start again
           if (!needs_stepping) step();
