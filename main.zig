@@ -94,38 +94,31 @@ fn eval(arena: *ArenaAllocator, bounder: *Bounder, exprs: []const Expr) ![]const
 
 // --- bounder ---
 
-const Bounder = struct {
-    work_budget_remaining: usize,
-    state: union(enum) {
-        NotSuspended,
-        Suspended: anyframe,
-    },
+const Bounder = union(enum) {
+    HasWorkBudget: usize,
+    Suspended: anyframe,
 
     fn init() Bounder {
-        return .{
-            .work_budget_remaining = 0,
-            .state = .NotSuspended,
-        };
+        return .{ .HasWorkBudget = 0 };
     }
 
     fn hasWork(self: *Bounder) bool {
-        return (self.state == .Suspended);
+        return (self.* == .Suspended);
     }
 
-    fn doWork(self: *Bounder) void {
-        self.work_budget_remaining = 1;
-        const frame = self.state.Suspended;
-        self.state = .NotSuspended;
+    fn doWork(self: *Bounder, work_budget: usize) void {
+        const frame = self.Suspended;
+        self.* = .{ .HasWorkBudget = work_budget };
         resume frame;
     }
 
     fn spendBudget(self: *Bounder) void {
-        if (self.work_budget_remaining == 0) {
+        if (self.HasWorkBudget == 0) {
             suspend {
-                self.state = .{ .Suspended = @frame() };
+                self.* = .{ .Suspended = @frame() };
             }
         }
-        self.work_budget_remaining -= 1;
+        self.HasWorkBudget -= 1;
     }
 };
 
@@ -179,10 +172,10 @@ const Runner = struct {
         }
     }
 
-    fn step(self: *Runner) void {
+    fn step(self: *Runner, work_budget: usize) void {
         assert(self.state == .Running);
         if (self.bounder.hasWork()) {
-            self.bounder.doWork();
+            self.bounder.doWork(work_budget);
         } else {
             var string = std.ArrayList(u8).init(&self.arena.allocator);
             var writer = string.writer();
@@ -230,8 +223,8 @@ export fn runner_start() void {
     runner.start();
 }
 
-export fn runner_step() void {
-    if (runner.state == .Running) nosuspend runner.step();
+export fn runner_step(work_budget: usize) void {
+    if (runner.state == .Running) nosuspend runner.step(work_budget);
 }
 
 export fn runner_output_ptr() usize {
