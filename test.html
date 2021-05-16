@@ -61,10 +61,8 @@
           const out_ptr = wasm.instance.exports.last_eval_ptr();
           const len = wasm.instance.exports.last_eval_len();
           let bytes2 = new Uint8Array(wasm.instance.exports.memory.buffer);
-          console.log(bytes2);
           let result = new TextDecoder().decode(bytes2.slice(out_ptr, out_ptr + len));
           
-          console.log(in_ptr, code.length, out_ptr, len, result);
           output.innerText = result;
           
           return true;
@@ -78,7 +76,7 @@
 <body>
   <div id="bounded-live-eval">
       <div id="bounded-live-eval-input"><textarea>0 1 | ^ *</textarea></div>
-      <div id="bounded-live-eval-output" style="width: 100vw"></div>
+      <div id="bounded-live-eval-output" style="height: 10em; overflow: scroll;"></div>
   </div>
 </body>
 </html>
