@@ -3,6 +3,33 @@
 
 <head>
   <meta charset="UTF-8">
+  <link rel="stylesheet" href="./codemirror-5.49.0/lib/codemirror.css">
+  <script src="./codemirror-5.49.0/lib/codemirror.js"></script>
+  <style>
+  #bounded-live-eval {
+      padding: 0 0 0 10px;
+  }
+  .CodeMirror {
+      height: auto;
+      border: solid 1px white;
+      border: 1px solid lightgrey;
+      border-radius: 10px;
+  }
+  .CodeMirror:hover {
+      border: solid 1px #0085a1;
+      border-radius: 10px;
+  }
+  .CodeMirror-selected {
+      background-color: #b7dde5 !important;
+  }
+  #bounded-live-eval-input {
+      margin: 1em 0 1em 0;
+  }
+  #bounded-live-eval-output {
+      margin: 1em 0 1em 0;
+      padding-left: 0.25em; /* to match codemirror */
+  }
+  </style>
   <script>
   async function run() {
       wasm = await WebAssembly.instantiateStreaming(
@@ -12,27 +39,46 @@
           }
       );
       
-      const code = new TextEncoder().encode("0 1 | ^ *");
+      const input = document.getElementById("bounded-live-eval-input");
+      const output = document.getElementById("bounded-live-eval-output");
       
-      const in_ptr = wasm.instance.exports.alloc_string(code.length);
-      let bytes1 = new Uint8Array(wasm.instance.exports.memory.buffer);
-      for (var i = 0; i < code.length; i++) {
-          bytes1[in_ptr+i] = code[i];
-      }
-      
-      wasm.instance.exports.run(in_ptr, code.len);
-      
-      const out_ptr = wasm.instance.exports.last_eval_ptr();
-      const len = wasm.instance.exports.last_eval_len();
-      let bytes2 = new Uint8Array(wasm.instance.exports.memory.buffer);
-      let result = new TextDecoder().decode(bytes2.slice(out_ptr, out_ptr + len));
-      
-      console.log(result);
+      var textarea = input.children[0];
+      var init_code = textarea.textContent;
+      var cm = CodeMirror.fromTextArea(textarea, {
+          viewportMargin: Infinity,
+      });
+      cm.on('change', function (cm) {
+          const code = new TextEncoder().encode(cm.getDoc().getValue());
+          
+          const in_ptr = wasm.instance.exports.alloc_string(code.length);
+          let bytes1 = new Uint8Array(wasm.instance.exports.memory.buffer);
+          for (var i = 0; i < code.length; i++) {
+              bytes1[in_ptr+i] = code[i];
+          }
+          
+          wasm.instance.exports.run(in_ptr, code.length);
+          
+          const out_ptr = wasm.instance.exports.last_eval_ptr();
+          const len = wasm.instance.exports.last_eval_len();
+          let bytes2 = new Uint8Array(wasm.instance.exports.memory.buffer);
+          console.log(bytes2);
+          let result = new TextDecoder().decode(bytes2.slice(out_ptr, out_ptr + len));
+          
+          console.log(in_ptr, code.length, out_ptr, len, result);
+          output.innerText = result;
+          
+          return true;
+      });
+      cm.getDoc().setValue(init_code);
   }
   run();
   </script>
 </head>
 
 <body>
+  <div id="bounded-live-eval">
+      <div id="bounded-live-eval-input"><textarea>0 1 | ^ *</textarea></div>
+      <div id="bounded-live-eval-output" style="width: 100vw"></div>
+  </div>
 </body>
 </html>

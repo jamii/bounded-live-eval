@@ -119,7 +119,7 @@ const Evaluator = struct {
 };
 
 fn run_to_finish(allocator: *Allocator, code: []const u8) ![]const []const u64 {
-    const exprs = try parse(allocator, "0 1 | ^ *");
+    const exprs = try parse(allocator, code);
 
     var evaluator = Evaluator.init(allocator);
     var frame = async evaluator.eval(exprs);
@@ -143,8 +143,8 @@ var gpa = GeneralPurposeAllocator(.{
 const global_allocator = &gpa.allocator;
 
 export fn alloc_string(len: usize) usize {
-    if (global_allocator.alloc(u8, len)) |ptr|
-        return @ptrToInt(&ptr[0])
+    if (global_allocator.alloc(u8, len)) |slice|
+        return @ptrToInt(@ptrCast(*u8, slice))
     else |_|
         return 0;
 }
@@ -152,7 +152,7 @@ export fn alloc_string(len: usize) usize {
 var last_eval_string: []const u8 = "";
 
 export fn last_eval_ptr() usize {
-    return @ptrToInt(&last_eval_string[0]);
+    return @ptrToInt(@ptrCast(*const u8, last_eval_string));
 }
 
 export fn last_eval_len() usize {
