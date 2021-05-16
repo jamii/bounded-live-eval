@@ -118,13 +118,7 @@ const Evaluator = struct {
     }
 };
 
-fn async_main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{
-        .enable_memory_limit = true,
-    }){
-        .requested_memory_limit = 100000,
-    };
-    const allocator = &gpa.allocator;
+fn run_to_finish(allocator: *Allocator, code: []const u8) ![]const []const u64 {
     const exprs = try parse(allocator, "0 1 | ^ *");
 
     var evaluator = Evaluator.init(allocator);
@@ -136,18 +130,48 @@ fn async_main() !void {
     }
 
     const bag = try await frame;
-    //for (bag) |row| {
-    //for (row) |number| {
-    //std.debug.print("{}, ", .{number});
-    //}
-    //std.debug.print("\n", .{});
-    //}
+    return bag;
 }
 
-pub fn main() !void {
-    try nosuspend async_main();
+// --- wasm stuff from here ---
+
+var gpa = GeneralPurposeAllocator(.{
+    .enable_memory_limit = true,
+}){
+    .requested_memory_limit = 100000,
+};
+const global_allocator = &gpa.allocator;
+
+export fn alloc_string(len: usize) usize {
+    if (global_allocator.alloc(u8, len)) |ptr|
+        return @ptrToInt(&ptr[0])
+    else |_|
+        return 0;
 }
 
-export fn wasm_main() void {
-    main() catch {};
+var last_eval_string: []const u8 = "";
+
+export fn last_eval_ptr() usize {
+    return @ptrToInt(&last_eval_string[0]);
+}
+
+export fn last_eval_len() usize {
+    return last_eval_string.len;
+}
+
+export fn run(ptr: usize, len: usize) void {
+    const code = @intToPtr([*]u8, ptr)[0..len];
+    var string = std.ArrayList(u8).init(global_allocator);
+    var writer = string.writer();
+    if (nosuspend run_to_finish(global_allocator, code)) |bag| {
+        for (bag) |row| {
+            for (row) |number| {
+                std.fmt.format(writer, "{}, ", .{number}) catch {};
+            }
+            std.fmt.format(writer, "\n", .{}) catch {};
+        }
+    } else |err| {
+        std.fmt.format(writer, "{}", .{err}) catch {};
+    }
+    last_eval_string = string.toOwnedSlice();
 }

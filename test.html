@@ -2,15 +2,32 @@
 <html lang="en">
 
 <head>
+  <meta charset="UTF-8">
   <script>
   async function run() {
-      response = await WebAssembly.instantiateStreaming(
+      wasm = await WebAssembly.instantiateStreaming(
           fetch("./main.wasm"),
           {
               env: {}
           }
       );
-      response.instance.exports.wasm_main();
+      
+      const code = new TextEncoder().encode("0 1 | ^ *");
+      
+      const in_ptr = wasm.instance.exports.alloc_string(code.length);
+      let bytes1 = new Uint8Array(wasm.instance.exports.memory.buffer);
+      for (var i = 0; i < code.length; i++) {
+          bytes1[in_ptr+i] = code[i];
+      }
+      
+      wasm.instance.exports.run(in_ptr, code.len);
+      
+      const out_ptr = wasm.instance.exports.last_eval_ptr();
+      const len = wasm.instance.exports.last_eval_len();
+      let bytes2 = new Uint8Array(wasm.instance.exports.memory.buffer);
+      let result = new TextDecoder().decode(bytes2.slice(out_ptr, out_ptr + len));
+      
+      console.log(result);
   }
   run();
   </script>
