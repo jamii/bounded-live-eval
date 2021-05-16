@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <script>
+  async function run() {
+      response = await WebAssembly.instantiateStreaming(
+          fetch("./main.wasm"),
+          {
+              env: {}
+          }
+      );
+      response.instance.exports.wasm_main();
+  }
+  run();
+  </script>
+</head>
+
+<body>
+</body>
+</html>

@@ -66,11 +66,9 @@ const Evaluator = struct {
     fn spend_budget(self: *Evaluator) void {
         if (self.work_budget_remaining == 0) {
             self.state = .Suspended;
-            std.debug.print("Suspending\n", .{});
             suspend {
                 self.frame = @frame();
             }
-            std.debug.print("Unsuspending\n", .{});
             std.debug.assert(self.state == .NotSuspended);
         }
         self.work_budget_remaining -= 1;
@@ -138,14 +136,18 @@ fn async_main() !void {
     }
 
     const bag = try await frame;
-    for (bag) |row| {
-        for (row) |number| {
-            std.debug.print("{}, ", .{number});
-        }
-        std.debug.print("\n", .{});
-    }
+    //for (bag) |row| {
+    //for (row) |number| {
+    //std.debug.print("{}, ", .{number});
+    //}
+    //std.debug.print("\n", .{});
+    //}
 }
 
 pub fn main() !void {
     try nosuspend async_main();
+}
+
+export fn wasm_main() void {
+    main() catch {};
 }
