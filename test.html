@@ -47,26 +47,37 @@
       var cm = CodeMirror.fromTextArea(textarea, {
           viewportMargin: Infinity,
       });
+      
+      var needs_stepping = false;
+      function step() {
+          console.log("step");
+          const work_budget = 1;
+          needs_stepping = wasm.instance.exports.runner_step(work_budget);
+          if (needs_stepping) {
+              setTimeout(step, 0);
+          } else {
+              const output_ptr = wasm.instance.exports.runner_output_ptr();
+              const output_len = wasm.instance.exports.runner_output_len();
+              let bytes = new Uint8Array(wasm.instance.exports.memory.buffer);
+              let result = new TextDecoder().decode(bytes.slice(output_ptr, output_ptr + output_len));
+              output.innerText = result;
+          }
+      }
+      
       cm.on('change', function (cm) {
           const code = new TextEncoder().encode(cm.getDoc().getValue());
           
-          const in_ptr = wasm.instance.exports.alloc_string(code.length);
+          const code_ptr = wasm.instance.exports.runner_reset(code.length);
           let bytes1 = new Uint8Array(wasm.instance.exports.memory.buffer);
           for (var i = 0; i < code.length; i++) {
-              bytes1[in_ptr+i] = code[i];
+              bytes1[code_ptr+i] = code[i];
           }
-          
-          wasm.instance.exports.run(in_ptr, code.length);
-          
-          const out_ptr = wasm.instance.exports.last_eval_ptr();
-          const len = wasm.instance.exports.last_eval_len();
-          let bytes2 = new Uint8Array(wasm.instance.exports.memory.buffer);
-          let result = new TextDecoder().decode(bytes2.slice(out_ptr, out_ptr + len));
-          
-          output.innerText = result;
-          
-          return true;
+          wasm.instance.exports.runner_start();
+          output.innerText = "Running...";
+          // if finished stepping previous run, need to start again
+          if (!needs_stepping) step();
       });
+      
       cm.getDoc().setValue(init_code);
   }
   run();

@@ -151,6 +151,7 @@ const Runner = struct {
         self.arena.deinit();
         self.arena = ArenaAllocator.init(child_allocator);
 
+        self.bounder = Bounder.init();
         self.code = self.arena.allocator.alloc(u8, code_len) catch @panic("OOM while receiving code");
         self.exprs = &[0]Expr{};
         self.state = .Init;
@@ -216,19 +217,20 @@ var runner = Runner.init(&gpa.allocator);
 
 export fn runner_reset(code_len: usize) usize {
     const code = runner.reset(code_len);
-    return @ptrToInt(@ptrCast(*u8, code));
+    return @ptrToInt(@ptrCast([*c]const u8, code));
 }
 
 export fn runner_start() void {
     runner.start();
 }
 
-export fn runner_step(work_budget: usize) void {
+export fn runner_step(work_budget: usize) bool {
     if (runner.state == .Running) nosuspend runner.step(work_budget);
+    return (runner.state == .Running);
 }
 
 export fn runner_output_ptr() usize {
-    return @ptrToInt(@ptrCast(*const u8, runner.get_output()));
+    return @ptrToInt(@ptrCast([*c]const u8, runner.get_output()));
 }
 
 export fn runner_output_len() usize {
