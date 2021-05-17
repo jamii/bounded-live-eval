@@ -114,8 +114,13 @@ const Bounder = union(enum) {
 
     fn spendBudget(self: *Bounder) void {
         if (self.HasWorkBudget == 0) {
-            suspend {
-                self.* = .{ .Suspended = @frame() };
+            switch (mode) {
+                .Async => {
+                    suspend {
+                        self.* = .{ .Suspended = @frame() };
+                    }
+                },
+                .Sync => @panic("Out of budget"),
             }
         }
         self.HasWorkBudget -= 1;
@@ -209,9 +214,7 @@ const Runner = struct {
 
 var gpa = GeneralPurposeAllocator(.{
     .enable_memory_limit = true,
-}){
-    .requested_memory_limit = 100000,
-};
+}){};
 
 var runner = Runner.init(&gpa.allocator);
 
@@ -240,13 +243,30 @@ export fn runnerOutputLen() usize {
 
 // --- for testing ---
 
+const mode: enum { Sync, Async } = .Async;
+
 pub fn main() !void {
     if (@import("builtin").os.tag != .freestanding) {
+        gpa.requested_memory_limit = std.math.maxInt(usize);
         const code = try std.io.getStdIn().reader().readAllAlloc(&gpa.allocator, std.math.maxInt(usize));
-        _ = runnerReset(1024 * 1024 * 16, code.len);
-        runner.code = code;
-        runnerStart();
-        while (runnerStep(1)) {}
-        std.debug.print("{}", .{runner.getOutput()});
+        switch (mode) {
+            .Async => {
+                var arena = ArenaAllocator.init(&gpa.allocator);
+                var bounder = Bounder.init();
+                const exprs = try parse(&arena, code);
+                var frame = async eval(&arena, &bounder, exprs);
+                while (bounder.hasWork()) bounder.doWork(1);
+                const bag = nosuspend try await frame;
+                std.debug.print("{} {}\n", .{ bag.len, gpa.total_requested_bytes });
+            },
+            .Sync => {
+                var arena = ArenaAllocator.init(&gpa.allocator);
+                var bounder = Bounder.init();
+                bounder.HasWorkBudget = std.math.maxInt(usize);
+                const exprs = try parse(&arena, code);
+                const bag = try eval(&arena, &bounder, exprs);
+                std.debug.print("{} {}\n", .{ bag.len, gpa.total_requested_bytes });
+            },
+        }
     }
 }
