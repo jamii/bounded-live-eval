@@ -113,14 +113,10 @@ const Bounder = union(enum) {
     }
 
     fn spendBudget(self: *Bounder) void {
+        if (mode == .Sync) return;
         if (self.HasWorkBudget == 0) {
-            switch (mode) {
-                .Async => {
-                    suspend {
-                        self.* = .{ .Suspended = @frame() };
-                    }
-                },
-                .Sync => @panic("Out of budget"),
+            suspend {
+                self.* = .{ .Suspended = @frame() };
             }
         }
         self.HasWorkBudget -= 1;
@@ -241,7 +237,7 @@ export fn runnerOutputLen() usize {
     return runner.getOutput().len;
 }
 
-// --- for testing ---
+// --- crude benchmarks ---
 
 const mode: enum { Sync, Async } = .Async;
 
@@ -249,23 +245,35 @@ pub fn main() !void {
     if (@import("builtin").os.tag != .freestanding) {
         gpa.requested_memory_limit = std.math.maxInt(usize);
         const code = try std.io.getStdIn().reader().readAllAlloc(&gpa.allocator, std.math.maxInt(usize));
+        var num_evals: usize = 10;
         switch (mode) {
             .Async => {
                 var arena = ArenaAllocator.init(&gpa.allocator);
                 var bounder = Bounder.init();
                 const exprs = try parse(&arena, code);
-                var frame = async eval(&arena, &bounder, exprs);
-                while (bounder.hasWork()) bounder.doWork(1);
-                const bag = nosuspend try await frame;
-                std.debug.print("{} {}\n", .{ bag.len, gpa.total_requested_bytes });
+                var total_len: usize = 0;
+                var timer = try std.time.Timer.start();
+                while (num_evals > 0) : (num_evals -= 1) {
+                    var frame = async eval(&arena, &bounder, exprs);
+                    while (bounder.hasWork()) bounder.doWork(1);
+                    const bag = nosuspend try await frame;
+                    total_len += bag.len;
+                }
+                const time = timer.lap();
+                std.debug.print("time={}\ntotal_len={}\n", .{ time, total_len });
             },
             .Sync => {
                 var arena = ArenaAllocator.init(&gpa.allocator);
                 var bounder = Bounder.init();
-                bounder.HasWorkBudget = std.math.maxInt(usize);
                 const exprs = try parse(&arena, code);
-                const bag = try eval(&arena, &bounder, exprs);
-                std.debug.print("{} {}\n", .{ bag.len, gpa.total_requested_bytes });
+                var total_len: usize = 0;
+                var timer = try std.time.Timer.start();
+                while (num_evals > 0) : (num_evals -= 1) {
+                    const bag = try eval(&arena, &bounder, exprs);
+                    total_len += bag.len;
+                }
+                const time = timer.lap();
+                std.debug.print("time={}\ntotal_len={}\n", .{ time, total_len });
             },
         }
     }
