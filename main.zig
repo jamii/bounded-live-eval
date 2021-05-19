@@ -147,13 +147,13 @@ const Runner = struct {
         };
     }
 
-    fn reset(self: *Runner, code_len: usize) []u8 {
+    fn reset(self: *Runner, code_len: usize) ![]u8 {
         const child_allocator = self.arena.child_allocator;
         self.arena.deinit();
         self.arena = ArenaAllocator.init(child_allocator);
 
         self.bounder = Bounder.init();
-        self.code = self.arena.allocator.alloc(u8, code_len) catch @panic("OOM while receiving code");
+        self.code = try self.arena.allocator.alloc(u8, code_len);
         self.exprs = &[0]Expr{};
         self.state = .Init;
 
@@ -169,7 +169,7 @@ const Runner = struct {
         } else |err| {
             var string = std.ArrayList(u8).init(&self.arena.allocator);
             var writer = string.writer();
-            std.fmt.format(writer, "{}", .{err}) catch @panic("OOM while writing error");
+            std.fmt.format(writer, "{}", .{err}) catch {};
             self.state = .{ .Error = string.toOwnedSlice() };
         }
     }
@@ -216,8 +216,13 @@ var runner = Runner.init(&gpa.allocator);
 
 export fn runnerReset(memory_limit: usize, code_len: usize) usize {
     gpa.requested_memory_limit = memory_limit;
-    const code = runner.reset(code_len);
-    return @ptrToInt(@ptrCast([*c]const u8, code));
+    if (runner.reset(code_len)) |code| {
+        return @ptrToInt(@ptrCast([*c]const u8, code));
+    } else |err| {
+        switch (err) {
+            error.OutOfMemory => return 0,
+        }
+    }
 }
 
 export fn runnerStart() void {

@@ -71,6 +71,10 @@
           const code = new TextEncoder().encode(cm.getDoc().getValue());
           
           const code_ptr = wasm.instance.exports.runnerReset(limit_bytes, code.length);
+          if (code_ptr == 0) {
+              output.innerText = "error.OutOfMemory";
+              return;
+          }
           let bytes1 = new Uint8Array(wasm.instance.exports.memory.buffer);
           for (var i = 0; i < code.length; i++) {
               bytes1[code_ptr+i] = code[i];
